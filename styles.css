@@ -201,6 +201,12 @@ tbody tr:hover{background:#f7faf6}
 .sync-pair-panel strong{font-size:14px}
 .sync-pair-panel p{margin:0;color:#74847a;font-size:11px;line-height:1.8}
 .sync-pair-code{min-height:48px;display:grid;place-items:center;border:1px dashed #a9c3ac;border-radius:11px;background:#fff;color:#1d5849;font-family:ui-monospace,Consolas,monospace;font-size:24px;font-weight:800;letter-spacing:.16em}
+.sync-pair-qr{display:grid;min-height:208px;place-items:center;padding:8px;border:1px solid #e2e9df;border-radius:12px;background:#fff}
+.sync-pair-qr canvas,.sync-pair-qr img{display:block;max-width:100%;height:auto!important}
+.sync-qr-reader{width:100%;max-width:360px;margin:10px auto;overflow:hidden;border-radius:12px;background:#18382f}
+.sync-qr-reader.hidden{display:none}
+.sync-scan-button{width:100%;min-height:46px}
+.sync-scan-hint{margin:0;color:#74847a;font-size:11px;text-align:center}
 .sync-pair-panel small{color:#6e8075;font-size:10px}
 .sync-pair-panel .btn{min-height:42px;margin-top:2px}
 html[data-access="viewer"] [data-action="add"],

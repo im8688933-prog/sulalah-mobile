@@ -25,6 +25,8 @@
   let previousFocus = null;
   let lastPairCode = '';
   let lastPairCodeExpiresAt = 0;
+  let viewerScanner = null;
+  let codeScanHandled = false;
 
   const ui = mountUi();
   setStatus('idle', app.isForcedReadOnly ? 'عرض فقط · أدخل رمز الكمبيوتر' : 'المزامنة غير مهيّأة');
@@ -52,10 +54,13 @@
 
     const readerMode = app.isForcedReadOnly;
     const fields = readerMode
-      ? '<label class="sync-field"><span>رمز الربط من الكمبيوتر</span><input id="sync-code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" dir="ltr" maxlength="10" placeholder="١٢٣٤٥٦٧٨٩٠" aria-label="رمز الربط من الكمبيوتر"></label>'
+      ? '<label class="sync-field"><span>أو أدخل رمز الربط يدويًا</span><input id="sync-code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" dir="ltr" maxlength="10" placeholder="١٢٣٤٥٦٧٨٩" aria-label="رمز الربط من الكمبيوتر"></label>'
       : '<label class="sync-field"><span>البريد الإلكتروني للحساب</span><input id="sync-email" type="email" autocomplete="username" required></label><label class="sync-field"><span>كلمة المرور</span><input id="sync-password" type="password" autocomplete="current-password" required></label>';
+    const scanPanel = readerMode
+      ? '<button type="button" class="btn btn-outline sync-scan-button" id="sync-scan-code">مسح QR بالكاميرا</button><div id="sync-qr-reader" class="sync-qr-reader hidden"></div><p class="sync-scan-hint">وجّه الكاميرا نحو الرمز الظاهر على الكمبيوتر.</p>'
+      : '';
     const pairingPanel = readerMode ? '' :
-      '<div id="sync-pair-panel" class="sync-pair-panel hidden"><span class="section-kicker">ربط الجوال</span><strong>رمز مؤقت لمرة واحدة</strong><p>أنشئ رمزًا على الكمبيوتر، ثم أدخله في تطبيق الجوال.</p><div class="sync-pair-code" id="sync-pair-code" dir="ltr"></div><small id="sync-pair-expiry"></small><button type="button" class="btn btn-outline" id="sync-create-code">إنشاء رمز للجوال</button></div>';
+      '<div id="sync-pair-panel" class="sync-pair-panel hidden"><span class="section-kicker">ربط الجوال</span><strong>امسح الرمز من تطبيق الهاتف</strong><p>رمز مؤقت لمرة واحدة، صالح لخمس دقائق.</p><div id="sync-pair-qr" class="sync-pair-qr" aria-label="رمز ربط الجوال"></div><div class="sync-pair-code" id="sync-pair-code" dir="ltr"></div><small id="sync-pair-expiry"></small><button type="button" class="btn btn-outline" id="sync-create-code">إنشاء رمز للجوال</button></div>';
 
     const overlay = document.createElement('section');
     overlay.id = 'sync-dialog';
@@ -65,9 +70,9 @@
       '<div class="sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-title" dir="rtl">' +
         '<div class="sync-dialog-heading"><div><span class="section-kicker">حفظ ومزامنة</span><h2 id="sync-title">مزامنة سجل العائلة</h2></div><button type="button" class="icon-button" id="sync-close" aria-label="إغلاق">×</button></div>' +
         '<p class="sync-description">' + (readerMode
-          ? 'الخطوة الوحيدة: اكتب الرمز الذي أنشأه الكمبيوتر. لا تحتاج إلى حساب أو كلمة مرور، وهذا الجهاز للقراءة فقط.'
+          ? 'الخطوة الوحيدة: امسح QR الظاهر على الكمبيوتر. لا تحتاج إلى حساب أو كلمة مرور، وهذا الجهاز للقراءة فقط.'
           : 'سجّل الدخول بحساب الكمبيوتر لمزامنة سجل العائلة. يمكنك إنشاء رمز مؤقت لربط الجوال.') + '</p>' +
-        '<form id="sync-form" autocomplete="on">' + fields +
+        '<form id="sync-form" autocomplete="on">' + scanPanel + fields +
           '<div class="sync-error hidden" id="sync-error" role="alert"></div>' +
           '<div class="sync-dialog-actions"><button type="submit" class="btn btn-primary" id="sync-connect">' + (readerMode ? 'ربط الجوال' : 'اتصال آمن') + '</button><button type="button" class="btn btn-quiet hidden" id="sync-signout">تسجيل الخروج</button></div>' +
         '</form>' + pairingPanel +
@@ -93,6 +98,8 @@
     if (!readerMode) {
       overlay.querySelector('#sync-email').value = session?.user?.email || '';
       overlay.querySelector('#sync-create-code').addEventListener('click', createViewerCode);
+    } else {
+      overlay.querySelector('#sync-scan-code').addEventListener('click', startCodeScanner);
     }
     overlay.querySelector('#sync-signout').addEventListener('click', signOut);
     overlay.querySelector('#sync-form').addEventListener('submit', signIn);
@@ -118,19 +125,21 @@
     if (app.isForcedReadOnly) {
       const codeInput = ui.overlay.querySelector('#sync-code');
       if (codeInput) codeInput.value = '';
-      if (!session) codeInput?.focus();
+      if (!session) (ui.overlay.querySelector('#sync-scan-code') || codeInput)?.focus();
     } else {
       ui.overlay.querySelector('#sync-password').value = '';
       ui.overlay.querySelector('#sync-email').focus();
       if (ui.pairPanel) ui.pairPanel.classList.toggle('hidden', !canEdit);
       if (lastPairCode && Date.now() < lastPairCodeExpiresAt && ui.pairCode) {
         ui.pairCode.textContent = lastPairCode;
+        renderPairQr(lastPairCode);
         ui.pairExpiry.textContent = 'صالح لعدة دقائق';
       }
     }
   }
 
   function closeDialog() {
+    stopCodeScanner();
     ui.overlay.classList.add('hidden');
     if (previousFocus?.focus) previousFocus.focus();
     previousFocus = null;
@@ -373,6 +382,7 @@
       lastPairCode = String(payload.code);
       lastPairCodeExpiresAt = new Date(payload.expires_at).getTime();
       ui.pairCode.textContent = lastPairCode;
+      renderPairQr(lastPairCode);
       ui.pairExpiry.textContent = 'صالح لمدة ٥ دقائق ويستخدم مرة واحدة.';
       ui.pairPanel.classList.remove('hidden');
     } catch (error) {
@@ -380,6 +390,85 @@
     } finally {
       button.disabled = false;
     }
+  }
+
+  function renderPairQr(code) {
+    const target = ui.overlay.querySelector('#sync-pair-qr');
+    if (!target) return;
+    target.replaceChildren();
+    if (typeof window.QRCode !== 'function') {
+      target.textContent = 'تعذر عرض QR. استخدم الرمز الرقمي أدناه.';
+      return;
+    }
+    new window.QRCode(target, {
+      text: code,
+      width: 192,
+      height: 192,
+      colorDark: '#153e35',
+      colorLight: '#ffffff',
+      correctLevel: window.QRCode.CorrectLevel.M
+    });
+  }
+
+  async function startCodeScanner() {
+    const button = ui.overlay.querySelector('#sync-scan-code');
+    const reader = ui.overlay.querySelector('#sync-qr-reader');
+    if (viewerScanner) {
+      await stopCodeScanner();
+      return;
+    }
+    if (typeof window.Html5Qrcode !== 'function') {
+      showError('تعذر تحميل ماسح QR. تحقق من الإنترنت أو أدخل الرمز يدويًا.');
+      return;
+    }
+
+    codeScanHandled = false;
+    button.disabled = true;
+    reader.classList.remove('hidden');
+    ui.overlay.querySelector('#sync-error').classList.add('hidden');
+    try {
+      const cameras = await window.Html5Qrcode.getCameras();
+      if (!cameras.length) throw new Error('لم يتم العثور على كاميرا في هذا الجهاز.');
+      const camera = cameras.find(item => /back|rear|environment/i.test(item.label)) || cameras[0];
+      viewerScanner = new window.Html5Qrcode('sync-qr-reader', {verbose: false});
+      button.textContent = 'إيقاف المسح';
+      await viewerScanner.start(camera.id, {fps: 10, qrbox: {width: 220, height: 220}, aspectRatio: 1}, async value => {
+        if (codeScanHandled) return;
+        const code = normalizePairCode(value);
+        if (code.length !== 10) {
+          showError('هذا QR ليس رمز ربط سلالة. امسح الرمز المعروض على الكمبيوتر.');
+          return;
+        }
+        codeScanHandled = true;
+        ui.overlay.querySelector('#sync-code').value = code;
+        await stopCodeScanner();
+        ui.overlay.querySelector('#sync-form').requestSubmit();
+      }, () => {});
+    } catch (error) {
+      showError(error.message || 'تعذر فتح الكاميرا. تحقق من إذن الكاميرا أو أدخل الرمز يدويًا.');
+      await stopCodeScanner();
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function stopCodeScanner() {
+    const scanner = viewerScanner;
+    viewerScanner = null;
+    codeScanHandled = false;
+    if (scanner) {
+      try {
+        if (scanner.isScanning) await scanner.stop();
+        scanner.clear();
+      } catch {}
+    }
+    const reader = ui.overlay.querySelector('#sync-qr-reader');
+    if (reader) {
+      reader.classList.add('hidden');
+      reader.replaceChildren();
+    }
+    const button = ui.overlay.querySelector('#sync-scan-code');
+    if (button) button.textContent = 'مسح QR بالكاميرا';
   }
 
   function normalizePairCode(value) {
